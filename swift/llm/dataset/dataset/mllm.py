@@ -3,8 +3,12 @@ import ast
 import os
 from typing import Any, Dict, Optional
 
+from pathlib import Path
 import numpy as np
+import pandas as pd
+from datasets import load_from_disk, DatasetDict
 from datasets import Dataset as HfDataset
+from datasets import concatenate_datasets
 from datasets import IterableDataset as HfIterableDataset
 from tqdm import tqdm
 
@@ -13,6 +17,7 @@ from ..media import MediaResource
 from ..preprocessor import GroundingMixin, MessagesPreprocessor, ResponsePreprocessor, RowPreprocessor
 from ..register import DatasetMeta, SubsetDataset, register_dataset
 
+VL_DATASET_ROOT='/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/'
 
 class ShareGPT4oPreprocessor(MessagesPreprocessor):
 
@@ -42,6 +47,7 @@ register_dataset(
     DatasetMeta(
         ms_dataset_id='AI-ModelScope/ShareGPT-4o',
         hf_dataset_id='OpenGVLab/ShareGPT-4o',
+        dataset_path=os.path.join(VL_DATASET_ROOT, 'ShareGPT-4o'),
         preprocess_func=ShareGPT4oPreprocessor(),
         subsets=['image_caption'],
         split=['images'],
@@ -60,6 +66,7 @@ register_dataset(
     DatasetMeta(
         ms_dataset_id='swift/gpt4v-dataset',
         hf_dataset_id='laion/gpt4v-dataset',
+        dataset_path=os.path.join(VL_DATASET_ROOT, 'gpt4v-dataset'),
         preprocess_func=GPT4vDataset(columns={
             'link': 'images',
             'caption': 'response'
@@ -73,6 +80,7 @@ register_dataset(
     DatasetMeta(
         ms_dataset_id='swift/RLAIF-V-Dataset',
         hf_dataset_id='openbmb/RLAIF-V-Dataset',
+        dataset_path=os.path.join(VL_DATASET_ROOT, 'RLAIF-V-Dataset'),
         preprocess_func=ResponsePreprocessor(columns={
             'question': 'query',
             'chosen': 'response',
@@ -92,6 +100,7 @@ class GarbagePreprocessor(ResponsePreprocessor):
 register_dataset(
     DatasetMeta(
         ms_dataset_id='tany0699/garbage265',
+        dataset_path=os.path.join(VL_DATASET_ROOT, 'garbage265'),
         preprocess_func=GarbagePreprocessor(columns={
             'category': 'label',
             'image:FILE': 'images'
@@ -120,6 +129,7 @@ class SA1BPairedCaptionPreprocessor(RowPreprocessor):
 register_dataset(
     DatasetMeta(
         ms_dataset_id='Tongyi-DataEngine/SA1B-Paired-Captions-Images',
+        dataset_path=os.path.join(VL_DATASET_ROOT, 'SA1B-Paired-Captions-Images'),
         preprocess_func=SA1BPairedCaptionPreprocessor(columns={
             'opensource_url': 'images',
         }),
@@ -870,11 +880,16 @@ class LLaVAInstructPreprocessor(MessagesPreprocessor):
     def prepare_dataset(self, dataset):
         self.all_folders = {}
         for media_type in ['coco', 'gqa', 'ocr_vqa', 'textvqa', 'VG_100K', 'VG_100K_2']:
-            self.all_folders[media_type] = MediaResource.download(media_type)
+            # print(f"[DEBUG] Downloading media_type: {media_type}")
+            folder_path = MediaResource.download(media_type)
+            self.all_folders[media_type] = folder_path
+            # print(f"[DEBUG] Downloaded {media_type} to: {folder_path}")
+            # self.all_folders[media_type] = MediaResource.download(media_type)
         return super().prepare_dataset(dataset)
 
     def preprocess(self, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         image = row['images']
+        # print(f"[DEBUG] Processing image: {image}")
         if 'coco/' in image:
             image = os.path.join(self.all_folders['coco'], image.replace('coco/', ''))
         elif 'gqa/' in image:
@@ -884,12 +899,24 @@ class LLaVAInstructPreprocessor(MessagesPreprocessor):
         elif 'textvqa/' in image:
             image = os.path.join(self.all_folders['textvqa'], image.replace('textvqa/', ''))
         elif 'VG_100K/' in image:
-            image = os.path.join(self.all_folders['VG_100K'], image.replace('vg/', ''))
+            filename = image.replace('vg/VG_100K/', '')
+            filename = filename.replace('VG_100K/', '')
+            if filename.startswith('0'):
+                filename = str(int(filename.split('.')[0])) + '.jpg'
+            image = os.path.join(self.all_folders['VG_100K'], filename)
+            # image = os.path.join(self.all_folders['VG_100K'], image.replace('vg/', ''))
         elif 'VG_100K_2/' in image:
-            image = os.path.join(self.all_folders['VG_100K_2'], image.replace('vg/', ''))
+            filename = image.replace('vg/VG_100K_2/', '')
+            filename = filename.replace('VG_100K_2/', '')
+            if filename.startswith('0'):
+                filename = str(int(filename.split('.')[0])) + '.jpg'
+            image = os.path.join(self.all_folders['VG_100K_2'], filename)
+            # image = os.path.join(self.all_folders['VG_100K_2'], image.replace('vg/', ''))
         if os.path.exists(image):
+            # print(f"[DEBUG] Image path exists: {image}")
             row['images'] = image
         else:
+            print(f"[DEBUG] Image path does not exist: {image}")
             return
 
         return super().preprocess(row)
@@ -898,6 +925,7 @@ class LLaVAInstructPreprocessor(MessagesPreprocessor):
 register_dataset(
     DatasetMeta(
         ms_dataset_id='AI-ModelScope/LLaVA-Instruct-150K',
+        dataset_path=os.path.join(VL_DATASET_ROOT, 'LLaVA-Instruct-150K'),
         ms_revision='d5db3806e395c60496630a206c336932e85a2d00',
         preprocess_func=LLaVAInstructPreprocessor(),
         split=['train'],
@@ -920,8 +948,8 @@ class LLaVAPretrainPreprocessor(MessagesPreprocessor):
 
     def preprocess(self, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         row.update(super().preprocess(row))
-        if row['image']:
-            file_path = os.path.join(self.media_dir, row['image'])
+        if row.get('images', None) is not None:
+            file_path = os.path.join(self.media_dir, row['images'])
             if os.path.exists(file_path):
                 return {'images': file_path}
             else:
@@ -1192,6 +1220,7 @@ register_dataset(
     DatasetMeta(
         ms_dataset_id='AI-ModelScope/LaTeX_OCR',
         hf_dataset_id='linxy/LaTeX_OCR',
+        dataset_path=os.path.join(VL_DATASET_ROOT, 'LaTeX_OCR'),
         subsets=['default', 'human_handwrite', 'human_handwrite_print', 'synthetic_handwrite', 'small'],
         preprocess_func=LatexocrPreprocessor(),
         split=['train', 'validation', 'test'],
@@ -1230,3 +1259,474 @@ register_dataset(
         hf_dataset_id='leonardPKU/clevr_cogen_a_train',
         preprocess_func=ClevrPreprocessor(),
         tags=['qa', 'math', 'vision', 'grpo']))
+
+class RoboBrainPreprocessor(ResponsePreprocessor):
+    def __init__(self, *, columns=None, root_path=None, **kwargs):
+        super().__init__(columns=columns, **kwargs)
+        self.root_path = root_path
+        
+    def preprocess(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        for message in row['messages']:
+            if "gpt" in message['from']:
+                message['role'] = "assistant"
+            elif message['from'] == "human":
+                message['role'] = "user"
+            else:
+                message['role'] = message['from']
+            message['content'] = message['value']
+            del message['from']
+            del message['value']
+            # raw_path = "rt_frames_success/rtx_frames_success_42/62_robo_set#episode_1570/frame_0.png"
+            # target_path = "/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/ShareRobot/planning/images/rtx_frames_success_42/62_robo_set#episode_1570/frame_0.png"
+        final_path = [os.path.join(self.root_path, raw_path.split('/', 1)[1]) for raw_path in row['images']]
+        row['images'] = final_path
+        return row
+
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id= "ShareRobot/planning",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/ShareRobot/planning/jsons_bridge_filtered_stride_last_0_1",
+        preprocess_func=RoboBrainPreprocessor(columns={'image': 'images', 'conversations': "messages"}, 
+                                              root_path = '/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/ShareRobot/planning/images/')
+    )
+)
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id= "ShareRobot/planning_test",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/ShareRobot/planning/jsons_test",
+        preprocess_func=RoboBrainPreprocessor(columns={'image': 'images', 'conversations': "messages"}, 
+                                              root_path = '/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/ShareRobot/planning/images/')
+    )
+)
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id= "ShareRobot/planning_stride",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/ShareRobot/planning/jsons_bridge_filtered_stride_0_1",
+        preprocess_func=RoboBrainPreprocessor(columns={'image': 'images', 'conversations': "messages"}, 
+                                              root_path = '/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/ShareRobot/planning/images/')
+    )
+)
+
+
+
+
+
+class RoboBrainAffordancePreprocessor(ResponsePreprocessor):
+    def __init__(self, *, columns=None, root_path=None, **kwargs):
+        super().__init__(columns=columns, **kwargs)
+        self.root_path = root_path
+        
+    def preprocess(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        instruction = row['query']
+        affordance = row['affordance']
+        row['messages'] = [
+            {
+                "role": "user",
+                "content": f"<image>\n{instruction}"
+            },
+            {
+                "role": "assistant",
+                "content": f"{affordance}"                
+            }
+        ]
+        final_path = os.path.join(self.root_path, row['image_path'])
+        del row['image_path']
+        row['images'] = final_path
+        # import pdb; pdb.set_trace()
+        return row
+
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id= "ShareRobot/affordance",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/ShareRobot/affordance/affordance.json",
+        preprocess_func=RoboBrainAffordancePreprocessor(root_path = '/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/ShareRobot/affordance/images/')
+    )
+)
+
+class RoboBrainTrajectoryPreprocessor(ResponsePreprocessor):
+    def __init__(self, *, columns=None, root_path=None, **kwargs):
+        super().__init__(columns=columns, **kwargs)
+        self.root_path = root_path
+        
+    def preprocess(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        instruction = row['query']
+        trajectory = row['trajectory']
+        row['messages'] = [
+            {
+                "role": "user",
+                "content": f"<image>{instruction}"
+            },
+            {
+                "role": "assistant",
+                "content": f"{trajectory}"                
+            }
+        ]
+        final_path = os.path.join(self.root_path, row['image_path'])
+        del row['image_path']
+        row['images'] = final_path
+        # import pdb; pdb.set_trace()
+        return row
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id= "ShareRobot/trajectory",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/ShareRobot/trajectory/trajectory.json",
+        preprocess_func=RoboBrainTrajectoryPreprocessor(root_path = '/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/ShareRobot/trajectory/images/')
+    )
+)
+
+class MMMUPreprocessor(MessagesPreprocessor):
+    def __init__(self, root, split="validation", subject_dir=None, subject_name=None):
+        super().__init__()
+        self.root = Path(root)
+        self.split = split
+        self.subject_dir = Path(subject_dir) if subject_dir else None
+        self.subject_name = subject_name
+
+    def _pick_subject_dir(self) -> Path:
+        # 优先：显式指定
+        if self.subject_dir and self.subject_dir.is_dir():
+            return self.subject_dir
+        if self.subject_name:
+            p = self.root / self.subject_name
+            if p.is_dir():
+                return p
+        # 退而求其次：自动挑选“有该 split 分片”的第一个子目录，且跳过隐藏目录
+        candidates = sorted(
+            p for p in self.root.iterdir()
+            if p.is_dir() and not p.name.startswith('.')
+        )
+        for p in candidates:
+            shards = list(p.glob(f"{self.split}-*.parquet"))
+            if shards:
+                return p
+        # 帮助定位问题：列出每个子目录有哪些 split
+        found = {p.name: {q.name.split('-')[0] for q in p.glob("*.parquet")} for p in candidates}
+        raise FileNotFoundError(f"No subject has '{self.split}' shards under {self.root}. Found splits: {found}")
+
+    def prepare_dataset(self, dataset):
+        subj = self._pick_subject_dir()
+        shards = sorted(subj.glob(f"{self.split}-*.parquet"))
+        if not shards:
+            raise FileNotFoundError(f"No parquet like {self.split}-*.parquet under {subj}")
+        df = pd.concat([pd.read_parquet(p) for p in shards], ignore_index=True)
+        return Dataset.from_pandas(df, preserve_index=False)
+
+    def preprocess(self, row):
+        return {
+            "images": row.get("image_1"),           # 只用第一张图
+            "query": row.get("question", ""),
+            "choices": row.get("options", []),
+            "question_id": row.get("id"),
+            "answer": row.get("answer"),
+        }
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id='swift/MMMU',
+        split=['dev', 'test', 'validation'],
+        preprocess_func=MMMUPreprocessor(
+            root='/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/MMMU'
+        )))
+
+class MMBenchENPreproc(MessagesPreprocessor):
+    def __init__(self, root: str, split: str = "dev"):
+        super().__init__()
+        self.root = Path(root)
+        self.split = split  # 可填 'dev' 或 'test'
+
+    def prepare_dataset(self, _):
+        obj = load_from_disk(str(self.root))
+        if isinstance(obj, DatasetDict):
+            if self.split not in obj:
+                raise ValueError(f"MMBench-en has no split '{self.split}'")
+            return obj[self.split]
+        # 单表 + split 列
+        if "split" in obj.column_names:
+            ds = obj.filter(lambda x: x["split"] == self.split)
+            if len(ds) == 0:
+                raise ValueError(f"No rows for split '{self.split}' in MMBench-en")
+            return ds
+        return obj  # 兜底（很少发生）
+
+    def preprocess(self, row):
+        # 选项来自列 'A','B','C','D'（有些版本也含 E/F，自行扩展）
+        choices = [row[k] for k in ["A","B","C","D"] if k in row and row[k] not in (None, "")]
+        return {
+            "images": row.get("image"),
+            "query":  row.get("question",""),
+            "choices": choices,
+            "answer": row.get("answer"),       # 多为 'A'/'B'/...；你的评测脚本会解析
+            "question_id": str(row.get("index"))
+        }
+
+
+register_dataset(DatasetMeta(
+    ms_dataset_id="swift/MMBench",
+    hf_dataset_id="swift/MMBench",
+    split=["dev","test"],
+    preprocess_func=MMBenchENPreproc("/inspire/hdd/global_user/gongjingjing-25039/zyfu/datasets/MMBench/en", split="dev")
+))
+
+
+
+class VLAOSDatasetPlanningPreprocessor(ResponsePreprocessor):
+    def __init__(self, *, columns=None, **kwargs):
+        super().__init__(columns=columns, **kwargs)
+        
+    def preprocess(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        task = row['task']
+        system_prompt = row['system']
+        plan = row['plan']
+        row['messages'] = [
+            {
+                "role": "user",
+                "content": f"<image>\n<image>\n{system_prompt}\n{task}"
+            },
+            {
+                "role": "assistant",
+                "content": f"{plan}"                
+            }
+        ]
+        image_path = [row['images']['image'], row['images']['wrist_image']]
+        row['images'] = image_path
+        return row
+
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id= "VLAOSDataset/planning",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/VLA-OS-Dataset/libero/libero_90/jsons/planning.json",
+        preprocess_func=VLAOSDatasetPlanningPreprocessor()
+    )
+)
+
+class VLAOSDatasetSubtaskPreprocessor(ResponsePreprocessor):
+    def __init__(self, *, columns=None, **kwargs):
+        super().__init__(columns=columns, **kwargs)
+        
+    def preprocess(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        task = row['task']
+        system_prompt = row['system']
+        subtask = row['subtask']
+        subtask_reason = row['subtask_reason']
+        row['messages'] = [
+            {
+                "role": "user",
+                "content": f"<image>\n<image>\n{system_prompt}\nGiven the task: {task} create a detailed, sequential plan."
+            },
+            {
+                "role": "assistant",
+                "content": f"{subtask}\n{subtask_reason}"                
+            }
+        ]
+        image_path = [row['images']['current_image'], row['images']['current_wrist_image'], row['images']['prev_image'], row['images']['prev_wrist_image']]
+        row['images'] = image_path
+        return row
+
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id= "VLAOSDataset/subtask",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/VLA-OS-Dataset/libero/libero_90/jsons/subtask.json",
+        preprocess_func=VLAOSDatasetSubtaskPreprocessor()
+    )
+)
+
+class VLAOSDatasetMovePreprocessor(ResponsePreprocessor):
+    def __init__(self, *, columns=None, **kwargs):
+        super().__init__(columns=columns, **kwargs)
+        
+    def preprocess(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        task = row['task']
+        system_prompt = row['system']
+        move = row['move']
+        move_reason = row['move_reason']
+        row['messages'] = [
+            {
+                "role": "user",
+                "content": f"<image>\n<image>\n<image>\n<image>\n{system_prompt}\n{task}"
+            },
+            {
+                "role": "assistant",
+                "content": f"{move}\n{move_reason}"                
+            }
+        ]
+        image_path = [row['images']['current_image'], row['images']['current_wrist_image'], row['images']['prev_image'], row['images']['prev_wrist_image']]
+        row['images'] = image_path
+        return row
+
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id= "VLAOSDataset/move",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/VLA-OS-Dataset/libero/libero_90/jsons/move.json",
+        preprocess_func=VLAOSDatasetMovePreprocessor()
+    )
+)
+
+class VLAOSDatasetBBoxPreprocessor(ResponsePreprocessor):
+    def __init__(self, *, columns=None, **kwargs):
+        super().__init__(columns=columns, **kwargs)
+        
+    def preprocess(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        system_prompt = row['system']
+        item_name = row['item_name']
+        bbox = row['bbox']
+        row['messages'] = [
+            {
+                "role": "user",
+                "content": f"<image>\n{system_prompt}\nGive the bbox of {item_name}"
+            },
+            {
+                "role": "assistant",
+                "content": f"{bbox}"                
+            }
+        ]
+        image_path = [row['images']]
+        row['images'] = image_path
+        return row
+
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id= "VLAOSDataset/bbox",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/VLA-OS-Dataset/libero/libero_90/jsons/bbox.json",
+        preprocess_func=VLAOSDatasetBBoxPreprocessor()
+    )
+)
+
+class VLAOSDatasetEEPosPreprocessor(ResponsePreprocessor):
+    def __init__(self, *, columns=None, **kwargs):
+        super().__init__(columns=columns, **kwargs)
+        
+    def preprocess(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        system_prompt = row['system']
+        gripper_position = row['gripper_position']
+        row['messages'] = [
+            {
+                "role": "user",
+                "content": f"<image>\n{system_prompt}"
+            },
+            {
+                "role": "assistant",
+                "content": f"{gripper_position}"                
+            }
+        ]
+        image_path = [row['images']]
+        row['images'] = image_path
+        return row
+
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id= "VLAOSDataset/gripper_position",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/VLA-OS-Dataset/libero/libero_90/jsons/gripper_position.json",
+        preprocess_func=VLAOSDatasetEEPosPreprocessor()
+    )
+)
+
+
+class VLABenchPreprocessor(ResponsePreprocessor):
+    def __init__(self, *, columns=None, **kwargs):
+        super().__init__(columns=columns, **kwargs)
+        
+    def preprocess(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        conversations = row['conversations']
+        messages = [
+            {
+                "role": "user",
+                "content": conversations[0]['value']
+            },
+            {
+                "role": "assistant",
+                "content": conversations[1]['value']
+            }
+        ]
+        row['messages'] = messages
+        del row['conversations']
+        return row
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id="VLABench/affordance",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/vlabench_vqa_assets/primitive/jsons_train/affordance/",
+        preprocess_func=VLABenchPreprocessor()
+    )
+)
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id="VLABench/goal_description",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/vlabench_vqa_assets/primitive/jsons_train/goal_description",
+        preprocess_func=VLABenchPreprocessor()
+    )
+)
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id="VLABench/spatial_understanding",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/vlabench_vqa_assets/primitive/jsons_train/spatial_understanding",
+        preprocess_func=VLABenchPreprocessor()
+    )
+)
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id="VLABench/task_planning",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/vlabench_vqa_assets/primitive/jsons_train/task_planning",
+        preprocess_func=VLABenchPreprocessor()
+    )
+)
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id="VLABench/trajectory",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/vlabench_vqa_assets/primitive/jsons_train/trajectory",
+        preprocess_func=VLABenchPreprocessor()
+    )
+)
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id="VLABench/affordance_test",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/vlabench_vqa_assets/primitive/jsons_test/affordance/",
+        preprocess_func=VLABenchPreprocessor()
+    )
+)
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id="VLABench/goal_description_test",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/vlabench_vqa_assets/primitive/jsons_test/goal_description",
+        preprocess_func=VLABenchPreprocessor()
+    )
+)
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id="VLABench/spatial_understanding_test",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/vlabench_vqa_assets/primitive/jsons_test/spatial_understanding",
+        preprocess_func=VLABenchPreprocessor()
+    )
+)
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id="VLABench/task_planning_test",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/vlabench_vqa_assets/primitive/jsons_test/task_planning",
+        preprocess_func=VLABenchPreprocessor()
+    )
+)
+
+register_dataset(
+    DatasetMeta(
+        ms_dataset_id="VLABench/trajectory_test",
+        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/vlabench_vqa_assets/primitive/jsons_test/trajectory",
+        preprocess_func=VLABenchPreprocessor()
+    )
+)

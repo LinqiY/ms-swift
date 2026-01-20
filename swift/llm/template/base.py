@@ -1595,10 +1595,9 @@ class Template(ProcessorMixin):
     def _data_collator_mm_data(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         # multimodal
         res = {}
-        pixel_values = [b['pixel_values'] for b in batch if b.get('pixel_values') is not None]
+        pixel_values = [torch.tensor(b['pixel_values']) for b in batch if b.get('pixel_values') is not None]
         if len(pixel_values) > 0:
             res['pixel_values'] = torch.concat(pixel_values)
-
             image_sizes = [b['image_sizes'] for b in batch if b.get('image_sizes') is not None]
             if len(image_sizes) > 0:
                 res['image_sizes'] = torch.concat(image_sizes)

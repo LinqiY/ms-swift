@@ -352,9 +352,77 @@ class Qwen2VLTemplate(Template):
                 inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
         return {'inputs_embeds': inputs_embeds}
-
+        
+        
     def _data_collator_mm_data(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
-        res = super()._data_collator_mm_data(batch)
+        res = {}
+        # === Handle pixel_values (images) ===
+        pixel_values = []
+        for idx, b in enumerate(batch):
+            p = b.get('pixel_values')
+            if p is None:
+                continue
+            p = torch.tensor(p)
+            if p.ndim == 3:
+                # [c, h, w] → [1, c, h, w]
+                p = p.unsqueeze(0)
+            pixel_values.append(p)
+        for p in pixel_values:
+            assert p.ndim == 4    
+        if len(pixel_values) > 0:
+            max_frames = max([p.shape[0] for p in pixel_values])
+            try:
+                c, h, w = pixel_values[0].shape[1:]
+            except Exception as e:
+                print(e)
+                print(pixel_values[0].shape)
+                exit(0)
+
+            padded_pixel_values = []
+            for p in pixel_values:
+                pad_len = max_frames - p.shape[0]
+                if pad_len > 0:
+                    pad_tensor = torch.zeros((pad_len, c, h, w), dtype=p.dtype)
+                    p = torch.cat([p, pad_tensor], dim=0)
+                padded_pixel_values.append(p)
+            res['pixel_values'] = torch.stack(padded_pixel_values, dim=0)  # [bsz, max_n_frame, c, h, w]
+
+        # === Handle image_sizes (optional, same length as pixel_values) ===
+        image_sizes = [torch.tensor(b['image_sizes']) for b in batch if b.get('image_sizes') is not None]
+        if len(image_sizes) > 0:
+            max_frames = max([s.shape[0] for s in image_sizes])
+            padded_sizes = []
+            for s in image_sizes:
+                pad_len = max_frames - s.shape[0]
+                if pad_len > 0:
+                    pad_tensor = torch.zeros((pad_len, *s.shape[1:]), dtype=s.dtype, device=s.device)
+                    s = torch.cat([s, pad_tensor], dim=0)
+                padded_sizes.append(s)
+            res['image_sizes'] = torch.stack(padded_sizes, dim=0)
+
+        # === Handle pixel_values_videos ===
+        pixel_values_videos = [torch.tensor(b['pixel_values_videos']) for b in batch if b.get('pixel_values_videos') is not None]
+        if len(pixel_values_videos) > 0:
+            max_frames = max([v.shape[0] for v in pixel_values_videos])
+            c, h, w = pixel_values_videos[0].shape[1:]
+
+            padded_videos = []
+            for v in pixel_values_videos:
+                pad_len = max_frames - v.shape[0]
+                if pad_len > 0:
+                    pad_tensor = torch.zeros((pad_len, c, h, w), dtype=v.dtype, device=v.device)
+                    v = torch.cat([v, pad_tensor], dim=0)
+                padded_videos.append(v)
+
+            res['pixel_values_videos'] = torch.stack(padded_videos, dim=0)  # [bsz, max_frames, c, h, w]
+
+        # === Handle Qwen2VL specific fields ===
+        second_per_grid_ts = self.gather_list(batch, 'second_per_grid_ts')
+        if second_per_grid_ts:
+            res['second_per_grid_ts'] = second_per_grid_ts
+        for media_type in ['image', 'video']:
+
+        # === Handle Qwen2VL specific fields ===
         second_per_grid_ts = self.gather_list(batch, 'second_per_grid_ts')
         if second_per_grid_ts:
             res['second_per_grid_ts'] = second_per_grid_ts
@@ -362,7 +430,13 @@ class Qwen2VLTemplate(Template):
             grid_thw = self.concat_tensor(batch, f'{media_type}_grid_thw', 0)
             if grid_thw is not None:
                 res[f'{media_type}_grid_thw'] = grid_thw
+            grid_thw = self.concat_tensor(batch, f'{media_type}_grid_thw', 0)
+            if grid_thw is not None:
+                res[f'{media_type}_grid_thw'] = grid_thw
+
         return res
+
+
 
     def packing_row(self, row: List[Tuple[Dict[str, Any], int]]) -> Dict[str, Any]:
         position_ids = []

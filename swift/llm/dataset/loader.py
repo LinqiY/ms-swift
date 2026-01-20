@@ -26,6 +26,56 @@ logger = get_logger()
 
 _dataset_meta_mapping = None
 
+VL_DATASET_ROOT='/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/'
+
+FILE_TYPE_MAPPING = {
+    'AI-ModelScope/LLaVA-Pretrain': "json", # ✅
+    'AI-ModelScope/LaTeX_OCR': "parquet", # ✅
+    'AI-ModelScope/LLaVA-Instruct-150K': "json", # ❌
+    'AI-ModelScope/ShareGPT-4o': "jsonl", # ✅
+    'AI-ModelScope/ShareGPT4V': "json",  # ❌
+    'AI-ModelScope/coco': "parquet",    # ✅
+    # 'modelscope/coco_2014_caption': 'python'
+    'swift/A-OKVQA': "parquet", # ✅
+    'swift/ChartQA': "parquet", # ✅
+    'swift/GRIT': "parquet", # ❌
+    'swift/Multimodal-Mind2Web': "parquet", # ❌
+    'swift/OCR-VQA': "parquet", # ✅
+    'swift/RLAIF-V-Dataset': "parquet", 
+    'swift/ScienceQA': "parquet", # ✅
+    'swift/gpt4v-dataset': "parquet", # ✅
+    'swift/llava-instruct-mix-vsft': "parquet", # ✅
+    'swift/llava-med-zh-instruct-60k': "parquet", # ✅
+    'swift/lnqa': "parquet", # ❌
+    'swift/path-vqa': "parquet", # ✅
+    'swift/refcoco': "parquet", # ❌
+    'swift/refcocog': "parquet", # ❌
+    # 'tany0699/garbage265': 'csv'
+    # ShareRobot
+    'ShareRobot/planning': 'json',
+    'ShareRobot/affordance': 'json',
+    'ShareRobot/trajectory': 'json',
+    'ShareRobot/planning_test': 'json',
+    'ShareRobot/planning_stride': 'json',
+    # VLAOSDataset
+    'VLAOSDataset/planning': 'json',
+    'VLAOSDataset/subtask': 'json',
+    'VLAOSDataset/move': 'json',
+    'VLAOSDataset/bbox': 'json',
+    'VLAOSDataset/gripper_position': 'json',
+    # VLABench
+    'VLABench/affordance': 'json',
+    'VLABench/goal_description': 'json',
+    'VLABench/spatial_understanding': 'json',
+    'VLABench/task_planning': 'json',
+    'VLABench/trajectory': 'json',
+    # VLABench-test  
+    'VLABench/affordance_test': 'json',
+    'VLABench/goal_description_test': 'json',
+    'VLABench/spatial_understanding_test': 'json',
+    'VLABench/task_planning_test': 'json',
+    'VLABench/trajectory_test': 'json',   
+}
 
 @dataclass
 class DatasetSyntax:
@@ -184,14 +234,126 @@ class DatasetLoader:
             return datasets[0]
         return concatenate_datasets(datasets)
 
+    # @staticmethod
+    # def _interleave_datasets(datasets, *args, **kwargs):
+    #     if len(datasets) == 0:
+    #         return
+    #     if len(datasets) == 1:
+    #         return datasets[0]
+    #     return interleave_datasets(datasets, *args, **kwargs)
+
     @staticmethod
     def _interleave_datasets(datasets, *args, **kwargs):
         if len(datasets) == 0:
             return
         if len(datasets) == 1:
             return datasets[0]
-        return interleave_datasets(datasets, *args, **kwargs)
+        
+        # 在调用 HuggingFace 函数之前处理特征对齐
+        try:
+            return interleave_datasets(datasets, *args, **kwargs)
+        except ValueError as e:
+            if "features can't be aligned" in str(e) and "images" in str(e):
+                
+                # 处理特征对齐问题
+                aligned_datasets = DatasetLoader._align_dataset_features(datasets)
+                return interleave_datasets(aligned_datasets, *args, **kwargs)
+            else:
+                raise e
 
+    @staticmethod
+    def _align_dataset_features(datasets):
+        """对齐数据集的 features，统一 images 字段格式"""
+        from datasets import Features, Value, Sequence
+        
+        aligned_datasets = []
+        for i, dataset in enumerate(datasets):
+            
+            if hasattr(dataset, 'features') and 'images' in dataset.features:
+                # 检查当前 images 特征格式
+                current_images_feature = dataset.features['images']
+                
+                # 统一转换为 bytes 格式
+                def convert_images_to_bytes(example):
+                    if 'images' in example and example['images']:
+                        converted_images = []
+                        for img in example['images']:
+                            if img.get('path') and img['path']:
+                                # 如果有路径，读取图像并转换为 bytes
+                                try:
+                                    with open(img['path'], 'rb') as f:
+                                        img_bytes = f.read()
+                                    converted_images.append({
+                                        'bytes': img_bytes,
+                                        'path': None
+                                    })
+                                except Exception as read_error:
+                                    # print(f"[DEBUG] Error reading image {img['path']}: {read_error}")
+                                    # 如果读取失败，设置为 None 而不是保持原样
+                                    converted_images.append({
+                                        'bytes': None,
+                                        'path': None
+                                    })
+                            elif img.get('bytes'):
+                                # 如果已经是 bytes 格式，保持原样
+                                converted_images.append(img)
+                            else:
+                                # 其他情况，设置为 None
+                                converted_images.append({
+                                    'bytes': None,
+                                    'path': None
+                                })
+                        example['images'] = converted_images
+                    return example
+                
+                # 转换数据
+                try:
+                    dataset = dataset.map(convert_images_to_bytes)
+                    
+                    # 更新 schema
+                    new_features = dataset.features.copy()
+                    new_features['images'] = Sequence({
+                        'bytes': Value(dtype='binary'),
+                        'path': Value(dtype='null')
+                    })
+                    dataset = dataset.cast(new_features)
+                    
+                except Exception as convert_error:
+                    # print(f"[DEBUG] Error converting dataset {i+1}: {convert_error}")
+                    # 如果转换失败，尝试强制更新 schema 而不转换数据
+                    try:
+                        new_features = dataset.features.copy()
+                        new_features['images'] = Sequence({
+                            'bytes': Value(dtype='binary'),
+                            'path': Value(dtype='null')
+                        })
+                        dataset = dataset.cast(new_features)
+                        # print(f"[DEBUG] Dataset {i+1} forced schema update")
+                    except Exception as cast_error:
+                        # print(f"[DEBUG] Failed to update schema for dataset {i+1}: {cast_error}")
+                        # 如果连模式更新都失败，保持原样
+                        pass
+            
+            aligned_datasets.append(dataset)
+        
+        # print("[DEBUG] Feature alignment completed")
+        return aligned_datasets
+
+
+
+    @staticmethod
+    def _get_dataset_files(dataset_dir, suffix):
+        import glob
+        dataset_files = glob.glob(f'{dataset_dir}/**/*.{suffix}', recursive=True)
+        dataset_files = [
+            f for f in dataset_files 
+            if not os.path.basename(f).startswith('dataset_infos') \
+                and not os.path.basename(f).startswith('configuration.json') \
+                and 'meta' not in os.path.basename(f) \
+                and 'video' not in f
+        ] 
+        return dataset_files
+        
     @staticmethod
     def _load_dataset_path(
         dataset_path: str,
@@ -205,6 +367,10 @@ class DatasetLoader:
         remove_unused_columns: bool = True,
     ) -> HfDataset:
         ext = os.path.splitext(dataset_path)[1].lstrip('.')
+        if ext == '' and os.path.isdir(dataset_path):
+            ext = FILE_TYPE_MAPPING[dataset_meta.ms_dataset_id]
+            dataset_path = DatasetLoader._get_dataset_files(dataset_meta.dataset_path, ext)
+            logger.info("dataset_path is: %s", dataset_path)
         file_type = {'jsonl': 'json', 'txt': 'text'}.get(ext) or ext
         kwargs = {'split': 'train', 'streaming': streaming, 'num_proc': num_proc}
         if file_type == 'csv':
@@ -246,7 +412,7 @@ class DatasetLoader:
                 os.rename(dataset_infos_path, f'{dataset_infos_path}_bak')
         elif dataset_id.startswith('/'):
             raise ValueError(f'The local path does not exist, dataset_id: `{dataset_id}`. '
-                             f'os.path.exists(dataset_id): {os.path.exists(dataset_id)}')
+                            f'os.path.exists(dataset_id): {os.path.exists(dataset_id)}')
         else:
             retry = 3
             load_context = partial(safe_ddp_context, hash_id=dataset_id, use_barrier=True)
@@ -276,7 +442,7 @@ class DatasetLoader:
                             raise
                         i += 1
                         logger.error(f'Dataset {dataset_id} load failed: subset_name={subset.subset},'
-                                     f'split={split} with error: {e}')
+                                    f'split={split} with error: {e}')
                     else:
                         break
             if hasattr(dataset, '_hf_ds'):
@@ -340,7 +506,7 @@ class DatasetLoader:
                     train_dataset, val_dataset = None, train_dataset
                 else:
                     raise ValueError('The IterableDataset does not support splitting the training set '
-                                     'and validation set when dataset_sample is None.')
+                                    'and validation set when dataset_sample is None.')
             else:
                 # not shuffle
                 train_dataset = train_dataset.take(dataset_sample)
@@ -397,6 +563,7 @@ class DatasetLoader:
                 columns=columns,
                 remove_unused_columns=remove_unused_columns,
             )
+            logger.info("Finished load dataset path")
         else:
             subsets: List[SubsetDataset] = DatasetLoader._select_subsets(dataset_syntax.subsets, dataset_meta)
             revision = dataset_meta.hf_revision if use_hf else dataset_meta.ms_revision
@@ -514,11 +681,15 @@ def load_dataset(
     if use_hf_default is None:
         use_hf_default = True if use_hf_hub() else False
     for dataset in datasets:
+        logger.info(f"Loading dataset: {dataset}")
         dataset_syntax = DatasetSyntax.parse(dataset)
         use_hf = dataset_syntax.use_hf or use_hf_default
         # compat dataset_name
-        if dataset_syntax.dataset in DATASET_MAPPING:
-            dataset_meta = DATASET_MAPPING[dataset_syntax.dataset]
+        matching_key = next((k for k in DATASET_MAPPING.keys() if isinstance(k, tuple) and (k[0] == dataset or k[1] == dataset)), None)
+        if dataset_syntax.dataset in matching_key:
+            dataset_meta = DATASET_MAPPING[matching_key]
+            if not hasattr(dataset_meta, 'dataset_path') or dataset_meta.dataset_path is None or not os.path.exists(dataset_meta.dataset_path):
+                dataset_meta.dataset_path = os.path.join(VL_DATASET_ROOT, dataset.split('/')[-1])
             if dataset_syntax.use_hf is None and dataset_meta.dataset_path is not None:
                 dataset_syntax.dataset = dataset_meta.dataset_path
                 dataset_syntax.dataset_type = 'path'

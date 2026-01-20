@@ -167,20 +167,26 @@ class RowPreprocessor:
         rows = self.batched_to_rows(batched_row)
 
         new_rows = []
-        for row in rows:
+        # for row in rows:
+        for i, row in enumerate(rows):
             try:
+                # print(f"[DEBUG] Processing row {i}, original row keys: {list(row.keys())}")
                 row = self.preprocess(row)
+                # print(f"[DEBUG] After preprocess, row: {row}")
                 # support [row1, row2, ...]
                 if row is None:
+                    # print(f"[DEBUG] Row {i} returned None, setting to empty list")
                     row = []
                 if isinstance(row, dict):
                     row = [row]
+                # print(f"[DEBUG] Row {i} after conversion: {row}")
                 for r in row:
                     self._check_objects(r)
                     self._check_messages(r)
                     self._check_rejected_response(r)
                     self._cast_images(r)
             except Exception as e:
+                print(f"[DEBUG] Exception in row {i}: {e}")
                 if strict:
                     logger.warning('To avoid errors, you can pass `strict=False`.')
                     raise
@@ -193,7 +199,10 @@ class RowPreprocessor:
                     self._traceback_counter += 1
                 row = []
             new_rows += row
+            #print(f"[DEBUG] new_rows length after row {i}: {len(new_rows)}")
         res = self.rows_to_batched(new_rows)
+        # print(f"[DEBUG] Final result keys: {list(res.keys()) if res else 'None'}")
+        # print(f"[DEBUG] Final result lengths: {[(k, len(v) if isinstance(v, list) else 'N/A') for k, v in res.items()] if res else 'None'}")
         self._remove_prefix_keys(res, '__#')  # compat GRPO
         if len(res) == 0:
             res['messages'] = []
@@ -320,7 +329,7 @@ class RowPreprocessor:
                         'strict': strict,
                         'ignore_max_length_error': ignore_max_length_error
                     },
-                    remove_columns=list(dataset.features.keys()),
+                    # remove_columns=list(dataset.features.keys()),
                     **map_kwargs)
             except NotImplementedError:
                 pass
