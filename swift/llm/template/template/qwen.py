@@ -256,60 +256,6 @@ class Qwen2VLTemplate(Template):
     def replace_bbox(self, bbox: List[int], index: int, inputs: StdTemplateInputs) -> List[Context]:
         return [f'<|box_start|>{self._get_bbox_str(bbox)}<|box_end|>']
 
-    def _encode(self, inputs: StdTemplateInputs) -> Dict[str, Any]:
-        encoded = super()._encode(inputs)
-        processor = self.processor
-        input_ids = encoded['input_ids']
-        labels = encoded['labels']
-        images = inputs.images
-        videos = inputs.videos
-        for media_type in ['images', 'videos']:
-            if locals()[media_type]:
-                if media_type == 'images':
-                    media_token = self.image_token_id
-                    media_inputs = processor.image_processor(
-                        images=images, videos=None, return_tensors='pt', do_resize=False)
-                    media_grid_thw = media_inputs['image_grid_thw']
-                else:
-                    if hasattr(processor, 'video_processor'):
-                        processor_func = processor.video_processor
-                    else:
-                        processor_func = processor.image_processor
-                    media_inputs = processor_func(images=None, videos=videos, return_tensors='pt', do_resize=False)
-                    media_grid_thw = media_inputs['video_grid_thw']
-                    media_token = self.video_token_id
-                    if self.version == 'v2_5':
-                        from qwen_vl_utils import vision_process
-                        media_inputs['second_per_grid_ts'] = [
-                            processor.image_processor.temporal_patch_size / vision_process.FPS
-                        ] * len(media_grid_thw)
-                idx_list = findall(input_ids, media_token)
-                merge_length = processor.image_processor.merge_size**2
-
-                def _get_new_tokens(i):
-                    token_len = (media_grid_thw[i].prod() // merge_length)
-                    return [media_token] * token_len
-
-                input_ids, labels = self._extend_tokens(input_ids, labels, idx_list, _get_new_tokens)
-                encoded.update(media_inputs)
-
-        encoded['input_ids'] = input_ids
-        encoded['labels'] = labels
-        return encoded
-
-    def compute_loss_context(self, model, inputs):
-        if 'real_position_ids' not in inputs:
-            return super().compute_loss_context(model, inputs)
-        if self.version == 'v2':
-            from transformers.models.qwen2_vl import modeling_qwen2_vl as modeling_module
-        elif self.version == 'v2_5':
-            from transformers.models.qwen2_5_vl import modeling_qwen2_5_vl as modeling_module
-        elif self.version == 'omni':
-            from transformers.models.qwen2_5_omni import modeling_qwen2_5_omni as modeling_module
-        position_ids = inputs['position_ids']
-        inputs['position_ids'] = inputs.pop('real_position_ids')
-        return self._patch_flash_attention_forward(modeling_module, position_ids)
-
     def _post_encode(self, model, inputs: Dict[str, Any]) -> Dict[str, Any]:
         if not self.is_training:
             return inputs
@@ -352,8 +298,141 @@ class Qwen2VLTemplate(Template):
                 inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
         return {'inputs_embeds': inputs_embeds}
+
+    def compute_loss_context(self, model, inputs):
+        if 'real_position_ids' not in inputs:
+            return super().compute_loss_context(model, inputs)
+        if self.version == 'v2':
+            from transformers.models.qwen2_vl import modeling_qwen2_vl as modeling_module
+        elif self.version == 'v2_5':
+            from transformers.models.qwen2_5_vl import modeling_qwen2_5_vl as modeling_module
+        elif self.version == 'omni':
+            from transformers.models.qwen2_5_omni import modeling_qwen2_5_omni as modeling_module
+        position_ids = inputs['position_ids']
+        inputs['position_ids'] = inputs.pop('real_position_ids')
+        return self._patch_flash_attention_forward(modeling_module, position_ids)
+
+    def _encode(self, inputs: StdTemplateInputs) -> Dict[str, Any]:
+        encoded = super()._encode(inputs)
+        processor = self.processor
+        input_ids = encoded['input_ids']
+        labels = encoded['labels']
+        images = inputs.images
+        videos = inputs.videos
         
+        for media_type in ['images', 'videos']:
+            media_list = locals()[media_type]
+            
+            if media_list:
+                if media_type == 'images':
+                    # DEBUG for Qwen num_image_tokens: 使用固定数量
+                    # media_token = self.image_token_id
+                    media_token = 151652
+                    media_inputs = processor.image_processor(
+                        images=images, videos=None, return_tensors='pt', do_resize=False)
+
+                    # ============ 方案：使用 torchvision 直接转换为 pixel_values ============
+                    import torchvision.transforms as T
+                    from PIL import Image
+                    
+                    # 定义转换（不包含 resize，保持原始尺寸）
+                    transform = T.Compose([
+                        T.Resize((448, 448)),
+                        T.ToTensor(),  # 转换为 [C, H, W] 并归一化到 [0, 1]
+                    ])
+                    
+                    pixel_values_list = []
+                    for img in images:
+                        # 确保是 PIL.Image
+                        if not isinstance(img, Image.Image):
+                            if isinstance(img, str):
+                                img = Image.open(img).convert('RGB')
+                            elif hasattr(img, 'convert'):  # 可能已经是 PIL Image
+                                img = img.convert('RGB')
+                            else:
+                                # 尝试从 numpy/tensor 转换
+                                import numpy as np
+                                if isinstance(img, np.ndarray):
+                                    img = Image.fromarray(img.astype(np.uint8))
+                                elif isinstance(img, torch.Tensor):
+                                    img = Image.fromarray(img.numpy().astype(np.uint8))
+                                else:
+                                    raise TypeError(f"Cannot convert {type(img)} to PIL Image")
+                        
+                        # 应用转换
+                        img_tensor = transform(img)  # [C, H, W]
+                        pixel_values_list.append(img_tensor)
+                    
+                    # Stack 成 batch: [B, C, H, W]
+                    pixel_values = torch.stack(pixel_values_list, dim=0)
+
+                    media_grid_thw = media_inputs['image_grid_thw']
+                else:
+                    if hasattr(processor, 'video_processor'):
+                        processor_func = processor.video_processor
+                    else:
+                        processor_func = processor.image_processor
+                    media_inputs = processor_func(images=None, videos=videos, return_tensors='pt', do_resize=False)
+                    media_grid_thw = media_inputs['video_grid_thw']
+                    media_token = self.video_token_id
+                    if self.version == 'v2_5':
+                        from qwen_vl_utils import vision_process
+                        media_inputs['second_per_grid_ts'] = [
+                            processor.image_processor.temporal_patch_size / vision_process.FPS
+                        ] * len(media_grid_thw)
+                
+                # ============ 关键修改：不使用 _extend_tokens，直接在最前面添加 image tokens ============
+                
+                # 计算每个图像需要的 token 数量
+                num_image_tokens_per_image = None
+                if hasattr(self, 'vl_num_image_tokens') and self.vl_num_image_tokens is not None:
+                    num_image_tokens_per_image = self.vl_num_image_tokens
+                
+                # if num_image_tokens_per_image:
+                #     # 使用固定数量
+                #     total_image_tokens = num_image_tokens_per_image * len(media_list)
+                # else:
+                #     # 动态计算总数
+                #     merge_length = processor.image_processor.merge_size**2
+                #     total_image_tokens = sum(
+                #         (media_grid_thw[i].prod() // merge_length).item()
+                #         for i in range(len(media_list))
+                #     )
+                total_image_tokens = len(media_list)
+                
+                # 生成 image token 列表
+                image_token_list = [media_token] * total_image_tokens
+                
+                # 找到原始 input_ids 中的 image_token_id 占位符并移除
+                idx_list = findall(input_ids, self.image_token_id)
+                
+                # 从后往前删除占位符（避免索引变化）
+                for idx in reversed(idx_list):
+                    input_ids.pop(idx)
+                    if labels:
+                        labels.pop(idx)
+                
+                # ✅ 将所有 image tokens 添加到最前面
+                input_ids = image_token_list + input_ids
+                if labels:
+                    # image tokens 对应的 labels 设为 -100（不计算损失）
+                    labels = [-100] * total_image_tokens + labels
+                
+                # 保存到 encoded
+                encoded.update(media_inputs)
+                if media_type == 'images':
+                    encoded['pixel_values'] = pixel_values  # [B, C, H, W]
+                    encoded['image_grid_thw'] = media_grid_thw
         
+        encoded['input_ids'] = input_ids
+        encoded['labels'] = labels
+        
+        # print(f"[DEBUG][Qwen2VLTemplate] input_ids length: {len(input_ids)}")
+        # print(f"[DEBUG][Qwen2VLTemplate] first 10 tokens: {input_ids[:10]}")
+        # print(f"[DEBUG][Qwen2VLTemplate] num image tokens at start: {sum(1 for t in input_ids if t == media_token)}")
+        
+        return encoded
+
     def _data_collator_mm_data(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         res = {}
         # === Handle pixel_values (images) ===
@@ -399,44 +478,7 @@ class Qwen2VLTemplate(Template):
                     s = torch.cat([s, pad_tensor], dim=0)
                 padded_sizes.append(s)
             res['image_sizes'] = torch.stack(padded_sizes, dim=0)
-
-        # === Handle pixel_values_videos ===
-        pixel_values_videos = [torch.tensor(b['pixel_values_videos']) for b in batch if b.get('pixel_values_videos') is not None]
-        if len(pixel_values_videos) > 0:
-            max_frames = max([v.shape[0] for v in pixel_values_videos])
-            c, h, w = pixel_values_videos[0].shape[1:]
-
-            padded_videos = []
-            for v in pixel_values_videos:
-                pad_len = max_frames - v.shape[0]
-                if pad_len > 0:
-                    pad_tensor = torch.zeros((pad_len, c, h, w), dtype=v.dtype, device=v.device)
-                    v = torch.cat([v, pad_tensor], dim=0)
-                padded_videos.append(v)
-
-            res['pixel_values_videos'] = torch.stack(padded_videos, dim=0)  # [bsz, max_frames, c, h, w]
-
-        # === Handle Qwen2VL specific fields ===
-        second_per_grid_ts = self.gather_list(batch, 'second_per_grid_ts')
-        if second_per_grid_ts:
-            res['second_per_grid_ts'] = second_per_grid_ts
-        for media_type in ['image', 'video']:
-
-        # === Handle Qwen2VL specific fields ===
-        second_per_grid_ts = self.gather_list(batch, 'second_per_grid_ts')
-        if second_per_grid_ts:
-            res['second_per_grid_ts'] = second_per_grid_ts
-        for media_type in ['image', 'video']:
-            grid_thw = self.concat_tensor(batch, f'{media_type}_grid_thw', 0)
-            if grid_thw is not None:
-                res[f'{media_type}_grid_thw'] = grid_thw
-            grid_thw = self.concat_tensor(batch, f'{media_type}_grid_thw', 0)
-            if grid_thw is not None:
-                res[f'{media_type}_grid_thw'] = grid_thw
-
         return res
-
-
 
     def packing_row(self, row: List[Tuple[Dict[str, Any], int]]) -> Dict[str, Any]:
         position_ids = []
@@ -473,7 +515,6 @@ class Qwen2VLTemplate(Template):
         elif self.is_training:
             res['position_ids'] = self._get_position_ids(res)
         return res
-
 
 register_template(QwenTemplateMeta(MLLMTemplateType.qwen2_vl, template_cls=Qwen2VLTemplate))
 

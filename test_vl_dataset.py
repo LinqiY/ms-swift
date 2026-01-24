@@ -136,15 +136,14 @@ if __name__ == "__main__":
     train_dataset = train_dataset.select(range(5))  # 选择前5条数据
     val_dataset = val_dataset.select(range(5))  # 选择前5条数据
     
-    print(train_dataset[1])
-    
-    # dataloader_args = get_overide_arguments(
-    #     model_id_or_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/model/paligemma-3b-pt-224/",
-    #     dataset=datasets,
-    #     per_device_train_batch_size=4,
-    #     dataloader_num_workers=0,
-    # ) 
-    # train_vl_dataloader, val_vl_dataloader = load_vl_dataloader(
-    #     dataloader_args, train_dataset, val_dataset, processor=None
-    # )
-    # import pdb; pdb.set_trace()
+    dataloader_args = get_overide_arguments(
+        # model_id_or_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/model/paligemma-3b-pt-224/",
+        model_id_or_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/model/Qwen2.5-VL-3B-Instruct",
+        dataset=datasets,
+        per_device_train_batch_size=4,
+        dataloader_num_workers=0,
+    ) 
+    train_vl_dataloader, val_vl_dataloader = load_vl_dataloader(
+        dataloader_args, train_dataset, val_dataset, processor=None
+    )
+    import pdb; pdb.set_trace()
