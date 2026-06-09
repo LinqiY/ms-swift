@@ -326,8 +326,9 @@ class Qwen2VLTemplate(Template):
             if media_list:
                 if media_type == 'images':
                     # DEBUG for Qwen num_image_tokens: 使用固定数量
-                    # media_token = self.image_token_id
-                    media_token = 151652
+                    media_token = self.image_token_id
+                    # DEBUG for AR-VLA image token index
+                    # media_token = 151652
                     media_inputs = processor.image_processor(
                         images=images, videos=None, return_tensors='pt', do_resize=False)
 

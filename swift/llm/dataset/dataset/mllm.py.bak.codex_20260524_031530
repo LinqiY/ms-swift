@@ -1228,16 +1228,6 @@ register_dataset(
     ))
 
 
-register_dataset(
-    DatasetMeta(
-        ms_dataset_id='AI-ModelScope/flowers102',
-        dataset_path=os.path.join(VL_DATASET_ROOT, 'flowers102'),
-        preprocess_func=ResponsePreprocessor(),
-        split=['train', 'validation', 'test'],
-        tags=['chat', 'cls', 'multi-modal', 'vision'],
-    ))
-
-
 class CapchaImagesPreprocessor(ResponsePreprocessor):
 
     def preprocess(self, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -1790,62 +1780,6 @@ class WidowXVQAPreprocessor(RowPreprocessor):
             'images': image_path
         }
         
-register_dataset(
-    DatasetMeta(
-        ms_dataset_id="Franka-VQA",
-        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/franka/bbq_sauce_isolated/VQA/Franka-VQA.json",
-        preprocess_func=WidowXVQAPreprocessor(),
-        tags=['multi-modal', 'robotics', 'vqa'],
-    )
-)
-
-register_dataset(
-    DatasetMeta(
-        ms_dataset_id="widowX-flower-VQA",
-        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/widowx_vqa/widowX-flower-VQA.json",
-        preprocess_func=WidowXVQAPreprocessor(),
-        tags=['multi-modal', 'robotics', 'vqa'],
-    )
-)
-
-register_dataset(
-    DatasetMeta(
-        ms_dataset_id="widowX-flower-in-domain-VQA",
-        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/widowx_vqa/widowX-flower-in-domain-VQA.json",
-        preprocess_func=WidowXVQAPreprocessor(),
-        tags=['multi-modal', 'robotics', 'vqa'],
-    )
-)
-
-register_dataset(
-    DatasetMeta(
-        ms_dataset_id="widowX-flower-OOD-VQA",
-        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/widowx_vqa/widowX-flower-OOD-VQA.json",
-        preprocess_func=WidowXVQAPreprocessor(),
-        tags=['multi-modal', 'robotics', 'vqa'],
-    )
-)
-
-
-
-register_dataset(
-    DatasetMeta(
-        ms_dataset_id="widowX-flower-gptOOD-VQA",
-        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/widowx_vqa/widowX-flower-gptOOD-VQA.json",
-        preprocess_func=WidowXVQAPreprocessor(),
-        tags=['multi-modal', 'robotics', 'vqa'],
-    )
-)
-
-register_dataset(
-    DatasetMeta(
-        ms_dataset_id="droid-OOD-VQA",
-        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/franka/bbq_sauce_2026_05_22_success_isolated/vqa_ood/droid-OOD-VQA.json",
-        preprocess_func=WidowXVQAPreprocessor(),
-        tags=["multi-modal", "robotics", "vqa"],
-    )
-)
-
 register_dataset(
     DatasetMeta(
         ms_dataset_id="WidowX-VQA/ood-trajectory",

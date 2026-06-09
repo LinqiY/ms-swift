@@ -124,8 +124,13 @@ if __name__ == "__main__":
         # 'VLABench/affordance',
         # 'VLABench/goal_description',
         # 'VLABench/spatial_understanding',
-        'VLABench/task_planning_test',
+        # 'VLABench/task_planning_test',
         # 'VLABench/trajectory',
+        # 'FruitPickAndPlaceVQA',
+        "WidowX-VQA/ood-gemini",
+        # "WidowX-VQA/ood-trajectory",
+        # "WidowX-VQA/trajectory",
+        # "WidowX-VQA/gemini",
     ]
     train_dataset, val_dataset = load_dataset(
         datasets,
@@ -137,8 +142,8 @@ if __name__ == "__main__":
     val_dataset = val_dataset.select(range(5))  # 选择前5条数据
     
     dataloader_args = get_overide_arguments(
-        # model_id_or_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/model/paligemma-3b-pt-224/",
-        model_id_or_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/model/Qwen2.5-VL-3B-Instruct",
+        model_id_or_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/model/paligemma-3b-pt-224/",
+        # model_id_or_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/model/Qwen2.5-VL-3B-Instruct",
         dataset=datasets,
         per_device_train_batch_size=4,
         dataloader_num_workers=0,

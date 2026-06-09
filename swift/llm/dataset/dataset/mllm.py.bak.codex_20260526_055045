@@ -1827,16 +1827,6 @@ register_dataset(
 )
 
 
-
-register_dataset(
-    DatasetMeta(
-        ms_dataset_id="widowX-flower-gptOOD-VQA",
-        dataset_path="/inspire/hdd/global_user/gongjingjing-25039/sdzhang/dataset/vl_dataset/widowx_vqa/widowX-flower-gptOOD-VQA.json",
-        preprocess_func=WidowXVQAPreprocessor(),
-        tags=['multi-modal', 'robotics', 'vqa'],
-    )
-)
-
 register_dataset(
     DatasetMeta(
         ms_dataset_id="droid-OOD-VQA",
